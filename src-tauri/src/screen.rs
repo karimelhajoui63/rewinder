@@ -41,7 +41,7 @@ fn capture_screen(screen_dir: PathBuf) {
 
 
 fn capture_screen_loop(screen_dir: PathBuf) {
-    const INTERVAL_SEC: u64 = 5;
+    const INTERVAL_SEC: u64 = 30;
     
     spawn(async move {
         let mut interval = interval(Duration::from_secs(INTERVAL_SEC));
