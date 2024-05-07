@@ -15,6 +15,16 @@
       "shell": {
         "all": false,
         "open": true
+      },
+      "fs": {
+          "exists": true,
+          "readFile": true,
+          "writeFile": true,
+          "removeFile": true,
+          "readDir": true,
+          "createDir": true,
+          "removeDir": true,
+          "scope": ["$APPDATA/*"]
       }
     },
     "windows": [
@@ -30,7 +40,7 @@
     "bundle": {
       "active": true,
       "targets": "all",
-      "identifier": "com.tauri.dev",
+      "identifier": "com.karim.rewinder",
       "icon": [
         "icons/32x32.png",
         "icons/128x128.png",
