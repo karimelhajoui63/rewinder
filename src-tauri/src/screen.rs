@@ -8,6 +8,7 @@ use tokio::{
 };
 
 use std::fs;
+use rdev::{listen, Event};
 
 
 fn get_current_monitor() -> Monitor {
@@ -62,6 +63,27 @@ fn capture_screen_loop(screen_dir: PathBuf) {
     });
 }
 
+
+
+fn listen_hardware_event_loop() {
+    fn callback(event: Event) {
+        if event.event_type == rdev::EventType::ButtonPress(rdev::Button::Left) {
+            println!("CLICKED");
+            // if should_capture_screen() {
+            //     capture_screen(screen_dir.clone());
+            // }
+        }
+    }
+    
+    spawn(async move {
+        // This will block.
+        if let Err(error) = listen(callback) {
+            println!("Error: {:?}", error)
+        }
+    });
+}
+
+
 pub fn setup_handler(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error + 'static>> {
     match app.handle().path_resolver().app_data_dir() {
         Some(app_data_dir) => {
@@ -70,6 +92,8 @@ pub fn setup_handler(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Err
             println!("app_local_data_dir: {}", screen_dir.display());
             fs::create_dir_all(&screen_dir)?;
             capture_screen_loop(screen_dir);
+            listen_hardware_event_loop();
+            println!("Screen capture loop started!");
         },
         None => {
             println!("app_local_data_dir: not found");
@@ -77,6 +101,3 @@ pub fn setup_handler(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Err
     }
     Ok(())
 }
-
-
-
