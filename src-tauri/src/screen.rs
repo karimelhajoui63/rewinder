@@ -1,13 +1,20 @@
 use xcap::{image::ImageError, Monitor};
 use mouse_position::mouse_position::Mouse;
-use std::{path::PathBuf, time::{Duration, Instant}};
+use std::{fs, path::PathBuf, time::{Duration, Instant}};
+
+
+use anyhow::anyhow;
+use chacha20poly1305::{
+    aead::{Aead, NewAead},
+    XChaCha20Poly1305,
+};
+use rand::{rngs::OsRng, RngCore};
 
 use tokio::{
     task::spawn,
     time::interval
 };
 
-use std::fs;
 use rdev::{listen, Event};
 
 
@@ -29,6 +36,10 @@ fn save_monitor_screen(monitor: Monitor, to: PathBuf) -> Result<(), ImageError> 
 }
 
 fn should_capture_screen() -> bool {
+    true
+}
+
+fn is_encryption_enabled() -> bool {
     true
 }
 
@@ -85,6 +96,8 @@ fn listen_hardware_event_loop() {
 
 
 pub fn setup_handler(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error + 'static>> {
+    let (key, nonce) = get_key_and_nonce();
+    
     match app.handle().path_resolver().app_data_dir() {
         Some(app_data_dir) => {
             let mut screen_dir = app_data_dir.clone();
@@ -99,5 +112,138 @@ pub fn setup_handler(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Err
             println!("app_local_data_dir: not found");
         }
     }
+    Ok(())
+}
+
+
+
+fn encrypt_small_file(
+    filepath: &str,
+    dist: &str,
+    key: &[u8; 32],
+    nonce: &[u8; 24],
+) -> Result<(), anyhow::Error> {
+    let cipher = XChaCha20Poly1305::new(key.into());
+
+    let file_data = fs::read(filepath)?;
+
+    let encrypted_file = cipher
+        .encrypt(nonce.into(), file_data.as_ref())
+        .map_err(|err| anyhow!("Encrypting small file: {}", err))?;
+
+    fs::write(&dist, encrypted_file)?;
+
+    Ok(())
+}
+
+fn decrypt_small_file(
+    encrypted_file_path: &str,
+    dist: &str,
+    key: &[u8; 32],
+    nonce: &[u8; 24],
+) -> Result<(), anyhow::Error> {
+    let cipher = XChaCha20Poly1305::new(key.into());
+
+    let file_data = fs::read(encrypted_file_path)?;
+
+    let decrypted_file = cipher
+        .decrypt(nonce.into(), file_data.as_ref())
+        .map_err(|err| anyhow!("Decrypting small file: {}", err))?;
+
+    fs::write(&dist, decrypted_file)?;
+
+    Ok(())
+}
+
+fn generate_key_and_nonce() -> ([u8; 32], [u8; 24]) {
+    let mut key = [0u8; 32];
+    let mut nonce = [0u8; 24];
+    // Generate random key and nonce
+    OsRng.fill_bytes(&mut key);
+    OsRng.fill_bytes(&mut nonce);
+    (key, nonce)
+}
+
+fn delete_key_and_nonce() {
+    keytar::delete_password("rewinder", "encryption_key").unwrap();
+    keytar::delete_password("rewinder", "encryption_nonce").unwrap();
+}
+
+fn get_key_and_nonce() -> ([u8; 32], [u8; 24]) {
+    let mut should_generate_key_and_nonce = false;
+    let mut key = [0u8; 32];
+    let mut nonce = [0u8; 24];
+
+    match keytar::get_password("rewinder", "encryption_key") {
+        Ok(encryption_key) => {
+            if encryption_key.password.is_empty() {
+                should_generate_key_and_nonce = true; 
+            } else {
+                // TODO: handle unwrap
+                key = to_bytes(&encryption_key.password).try_into().unwrap();
+                println!("Key: {:?}", to_string(&key));
+            }
+        },
+        Err(_) => should_generate_key_and_nonce = true,
+    }
+    match keytar::get_password("rewinder", "encryption_nonce") {
+        Ok(encryption_nonce) => {
+            if encryption_nonce.password.is_empty() {
+                    should_generate_key_and_nonce = true;
+                } else {
+                    nonce = to_bytes(&encryption_nonce.password).try_into().unwrap();
+                    println!("Nonce: {}", to_string(&nonce));
+                }
+        },
+        Err(_) => should_generate_key_and_nonce = true,
+    }
+    if should_generate_key_and_nonce {
+        println!("Generating key and nonce...");
+        let (key, nonce) = generate_key_and_nonce();
+        keytar::set_password("rewinder", "encryption_key", &to_string(&key)).unwrap();
+        keytar::set_password("rewinder", "encryption_nonce", &to_string(&nonce)).unwrap();
+        println!("Key and nonce generated!");
+        println!("Key: {:?}", to_string(&key)  );
+        println!("Nonce: {:?}", to_string(&nonce)  );
+        return (key, nonce);
+    } else {
+        return (key, nonce);
+    
+    }
+}
+
+fn to_string(v: &[u8]) -> String {
+    v.to_vec().iter().map(|b| *b as char).collect::<String>()
+}
+
+// reverse of `to_string` function
+fn to_bytes(s: &str) -> Vec<u8> {
+    s.chars().map(|c| c as u8).collect()
+}
+
+fn example_of_how_to_use_encryption() -> Result<(), anyhow::Error> {
+    let (key, nonce) = generate_key_and_nonce();
+
+    let start = Instant::now();
+
+    println!("Encrypting image.png to image.encrypted");
+    encrypt_small_file(
+        "src/image.png",
+        "src/image.encrypted",
+        &key,
+        &nonce,
+    )?;
+
+    println!("Decrypting image.encrypted to image.decrypted");
+    decrypt_small_file(
+        "src/image.encrypted",
+        "src/image.decrypted.png",
+        &key,
+        &nonce,
+    )?;
+
+    let duration = start.elapsed();
+    println!("Encryption/Decryption Time: {:?}", duration);
+
     Ok(())
 }
