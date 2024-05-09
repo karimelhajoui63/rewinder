@@ -14,11 +14,10 @@ fn greet(app_handle: tauri::AppHandle, name: &str) -> String {
 }
 
 #[tokio::main]
-async fn main() {    
+async fn main() {
     tauri::Builder::default()
         .setup(screen::setup_handler)
         .invoke_handler(tauri::generate_handler![greet])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
-
