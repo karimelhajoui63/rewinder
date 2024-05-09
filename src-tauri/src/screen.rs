@@ -1,6 +1,6 @@
 use xcap::{image::ImageError, Monitor};
 use mouse_position::mouse_position::Mouse;
-use std::{fs, path::PathBuf, time::{Duration, Instant}};
+use std::{fs, path::PathBuf, sync::Mutex, time::{Duration, Instant}};
 
 
 use anyhow::anyhow;
@@ -16,6 +16,11 @@ use tokio::{
 };
 
 use rdev::{listen, Event};
+
+
+use once_cell::sync::Lazy;
+
+static SCREEN_DIR: Lazy<Mutex<PathBuf>> = Lazy::new(|| Mutex::new(PathBuf::new()));
 
 
 fn get_current_monitor() -> Monitor {
@@ -43,8 +48,9 @@ fn is_encryption_enabled() -> bool {
     true
 }
 
-fn capture_screen(screen_dir: PathBuf) {
+fn capture_screen() {
     let monitor = get_current_monitor();
+    let screen_dir = SCREEN_DIR.lock().unwrap().clone();
     match save_monitor_screen(monitor, screen_dir) {
         Ok(_) => println!("Screen captured!"),
         Err(e) => println!("Error: {}", e)
@@ -52,7 +58,7 @@ fn capture_screen(screen_dir: PathBuf) {
 }
 
 
-fn capture_screen_loop(screen_dir: PathBuf) {
+fn capture_screen_loop() {
     const INTERVAL_SEC: u64 = 30;
     
     spawn(async move {
@@ -62,11 +68,11 @@ fn capture_screen_loop(screen_dir: PathBuf) {
             interval.tick().await;
             if should_capture_screen() {
                 let start_time = Instant::now();
-                capture_screen(screen_dir.clone());
+                capture_screen();
                 let elapsed_time = start_time.elapsed();
                 println!("capture_screen took: {:?}", elapsed_time);
                 // Save the elapsed time into a file
-                let mut output_path = screen_dir.clone();
+                let mut output_path = SCREEN_DIR.lock().unwrap().clone();
                 output_path.push("elapsed_time.txt");
                 fs::write(output_path, format!("{:?}", elapsed_time)).expect("Unable to write file");
             }
@@ -80,9 +86,9 @@ fn listen_hardware_event_loop() {
     fn callback(event: Event) {
         if event.event_type == rdev::EventType::ButtonPress(rdev::Button::Left) {
             println!("CLICKED");
-            // if should_capture_screen() {
-            //     capture_screen(screen_dir.clone());
-            // }
+            if should_capture_screen() {
+                capture_screen();
+            }
         }
     }
     
@@ -102,11 +108,19 @@ pub fn setup_handler(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Err
         Some(app_data_dir) => {
             let mut screen_dir = app_data_dir.clone();
             screen_dir.push("screen");
-            println!("app_local_data_dir: {}", screen_dir.display());
             fs::create_dir_all(&screen_dir)?;
-            capture_screen_loop(screen_dir);
+
+            // Save the screen_dir into a global variable
+            {
+                let mut data = SCREEN_DIR.lock().unwrap();
+                *data = screen_dir.clone();
+            }
+            println!("app_local_data_dir: {}", SCREEN_DIR.lock().unwrap().display());
+
+
+            capture_screen_loop();
             listen_hardware_event_loop();
-            println!("Screen capture loop started!");
+
         },
         None => {
             println!("app_local_data_dir: not found");

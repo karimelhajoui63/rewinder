@@ -2924,6 +2924,7 @@ dependencies = [
  "image 0.25.1",
  "keytar",
  "mouse_position",
+ "once_cell",
  "rand 0.8.5",
  "rdev",
  "serde",
