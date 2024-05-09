@@ -21,8 +21,8 @@ use rdev::{listen, Event};
 use once_cell::sync::Lazy;
 
 static SCREEN_DIR: Lazy<Mutex<PathBuf>> = Lazy::new(|| Mutex::new(PathBuf::new()));
-// static KEY: Lazy<Mutex<[u8; 32]>> = Lazy::new(|| Mutex::new([0u8; 32]));
-// static NONCE: Lazy<Mutex<[u8; 24]>> = Lazy::new(|| Mutex::new([0u8; 24]));
+static KEY: Lazy<Mutex<[u8; 32]>> = Lazy::new(|| Mutex::new([0u8; 32]));
+static NONCE: Lazy<Mutex<[u8; 24]>> = Lazy::new(|| Mutex::new([0u8; 24]));
 
 fn get_current_monitor() -> Monitor {
     let position = Mouse::get_mouse_position();
@@ -100,7 +100,9 @@ fn listen_hardware_event_loop() {
 }
 
 pub fn setup_handler(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error + 'static>> {
-    let (key, nonce) = get_key_and_nonce();
+    if is_encryption_enabled() {
+        fetch_or_generate_key_and_nonce();
+    }
 
     match app.handle().path_resolver().app_data_dir() {
         Some(app_data_dir) => {
@@ -108,11 +110,7 @@ pub fn setup_handler(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Err
             screen_dir.push("screen");
             fs::create_dir_all(&screen_dir)?;
 
-            // Save the screen_dir into a global variable
-            {
-                let mut data = SCREEN_DIR.lock().unwrap();
-                *data = screen_dir.clone();
-            }
+            *SCREEN_DIR.lock().unwrap() = screen_dir;
             println!(
                 "app_local_data_dir: {}",
                 SCREEN_DIR.lock().unwrap().display()
@@ -128,18 +126,16 @@ pub fn setup_handler(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Err
     Ok(())
 }
 
-fn encrypt_small_file(
-    filepath: &str,
-    dist: &str,
-    key: &[u8; 32],
-    nonce: &[u8; 24],
-) -> Result<(), anyhow::Error> {
-    let cipher = XChaCha20Poly1305::new(key.into());
+fn encrypt_small_file(filepath: &str, dist: &str) -> Result<(), anyhow::Error> {
+    let key = KEY.lock().unwrap().clone();
+    let nonce = NONCE.lock().unwrap().clone();
+
+    let cipher = XChaCha20Poly1305::new(&key.into());
 
     let file_data = fs::read(filepath)?;
 
     let encrypted_file = cipher
-        .encrypt(nonce.into(), file_data.as_ref())
+        .encrypt(&nonce.into(), file_data.as_ref())
         .map_err(|err| anyhow!("Encrypting small file: {}", err))?;
 
     fs::write(&dist, encrypted_file)?;
@@ -147,18 +143,16 @@ fn encrypt_small_file(
     Ok(())
 }
 
-fn decrypt_small_file(
-    encrypted_file_path: &str,
-    dist: &str,
-    key: &[u8; 32],
-    nonce: &[u8; 24],
-) -> Result<(), anyhow::Error> {
-    let cipher = XChaCha20Poly1305::new(key.into());
+fn decrypt_small_file(encrypted_file_path: &str, dist: &str) -> Result<(), anyhow::Error> {
+    let key = KEY.lock().unwrap().clone();
+    let nonce = NONCE.lock().unwrap().clone();
+
+    let cipher = XChaCha20Poly1305::new(&key.into());
 
     let file_data = fs::read(encrypted_file_path)?;
 
     let decrypted_file = cipher
-        .decrypt(nonce.into(), file_data.as_ref())
+        .decrypt(&nonce.into(), file_data.as_ref())
         .map_err(|err| anyhow!("Decrypting small file: {}", err))?;
 
     fs::write(&dist, decrypted_file)?;
@@ -180,7 +174,7 @@ fn delete_key_and_nonce() {
     keytar::delete_password("rewinder", "encryption_nonce").unwrap();
 }
 
-fn get_key_and_nonce() -> ([u8; 32], [u8; 24]) {
+fn fetch_or_generate_key_and_nonce() {
     let mut should_generate_key_and_nonce = false;
     let mut key = [0u8; 32];
     let mut nonce = [0u8; 24];
@@ -217,7 +211,8 @@ fn get_key_and_nonce() -> ([u8; 32], [u8; 24]) {
         keytar::set_password("rewinder", "encryption_nonce", &to_string(&nonce)).unwrap();
     }
 
-    return (key, nonce);
+    *KEY.lock().unwrap() = key;
+    *NONCE.lock().unwrap() = nonce;
 }
 
 fn to_string(v: &[u8]) -> String {
@@ -230,20 +225,13 @@ fn to_bytes(s: &str) -> Vec<u8> {
 }
 
 fn example_of_how_to_use_encryption() -> Result<(), anyhow::Error> {
-    let (key, nonce) = generate_random_key_and_nonce();
-
     let start = Instant::now();
 
     println!("Encrypting image.png to image.encrypted");
-    encrypt_small_file("src/image.png", "src/image.encrypted", &key, &nonce)?;
+    encrypt_small_file("src/image.png", "src/image.encrypted")?;
 
     println!("Decrypting image.encrypted to image.decrypted");
-    decrypt_small_file(
-        "src/image.encrypted",
-        "src/image.decrypted.png",
-        &key,
-        &nonce,
-    )?;
+    decrypt_small_file("src/image.encrypted", "src/image.decrypted.png")?;
 
     let duration = start.elapsed();
     println!("Encryption/Decryption Time: {:?}", duration);
