@@ -59,8 +59,9 @@ fn should_capture_screen() -> bool {
     true
 }
 
-fn is_periodic_capture_enabled() -> bool {
-    false
+pub fn is_periodic_capture_enabled() -> bool {
+    let config_json: serde_json::Value = get_config_json();
+    return config_json["periodic_capture_enabled"].as_bool().unwrap();
 }
 
 pub fn toggle_settings(setting: &str, enable: bool) {
@@ -73,8 +74,9 @@ pub fn toggle_settings(setting: &str, enable: bool) {
     .unwrap();
 }
 
-fn is_encryption_enabled() -> bool {
-    false
+pub fn is_encryption_enabled() -> bool {
+    let config_json: serde_json::Value = get_config_json();
+    return config_json["encryption_enabled"].as_bool().unwrap();
 }
 
 // fn that return the json of the config file and create it if it doesn't exist yet
@@ -82,9 +84,9 @@ fn get_config_json() -> serde_json::Value {
     let path = get_config_path();
     if !path.exists() {
         let default_config = serde_json::json!({
-            "encryption_enabled": false,
+            "encryption_enabled": true,
             "periodic_capture_enabled": false,
-            "click_event_enabled": false
+            "click_event_enabled": true
         });
         fs::write(path, serde_json::to_string_pretty(&default_config).unwrap()).unwrap();
         return default_config;
@@ -98,8 +100,9 @@ fn get_config_path() -> PathBuf {
     PathBuf::from(APP_DATA_DIR.lock().unwrap().clone()).join("config.json")
 }
 
-fn is_click_event_enabled() -> bool {
-    false
+pub fn is_click_event_enabled() -> bool {
+    let config_json: serde_json::Value = get_config_json();
+    return config_json["click_event_enabled"].as_bool().unwrap();
 }
 
 fn capture_screen() {

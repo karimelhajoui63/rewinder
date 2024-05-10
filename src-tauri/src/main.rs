@@ -15,15 +15,30 @@ fn clear_image_history() -> String {
 }
 
 #[tauri::command]
+fn get_encryption_status() -> bool {
+    screen::is_encryption_enabled()
+}
+
+#[tauri::command]
 fn toggle_encryption(enable: bool) -> String {
     screen::toggle_settings("encryption_enabled", enable);
     format!("Encryption enabled: {}", enable)
 }
 
 #[tauri::command]
+fn get_periodic_capture_status() -> bool {
+    screen::is_periodic_capture_enabled()
+}
+
+#[tauri::command]
 fn toggle_periodic_capture(enable: bool) -> String {
     screen::toggle_settings("periodic_capture_enabled", enable);
     format!("Periodic capture enabled: {}", enable)
+}
+
+#[tauri::command]
+fn get_click_event_status() -> bool {
+    screen::is_click_event_enabled()
 }
 
 #[tauri::command]
@@ -41,7 +56,10 @@ async fn main() {
             clear_image_history,
             toggle_encryption,
             toggle_periodic_capture,
-            toggle_click_event
+            toggle_click_event,
+            get_encryption_status,
+            get_periodic_capture_status,
+            get_click_event_status
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

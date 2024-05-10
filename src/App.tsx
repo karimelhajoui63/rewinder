@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/tauri";
 
 
@@ -8,6 +8,15 @@ export default function App() {
   const [encryptionEnabled, setEncryptionEnabled] = useState(false);
   const [periodicCaptureEnabled, setPeriodicCaptureEnabled] = useState(false);
   const [clickEventEnabled, setClickEventEnabled] = useState(false);
+
+  // Get encryption status (from the backend) once using useEffect, at the initialization, and update the state
+  useEffect(() => {
+    (async () => {
+      setEncryptionEnabled(await invoke("get_encryption_status"));
+      setPeriodicCaptureEnabled(await invoke("get_periodic_capture_status"));
+      setClickEventEnabled(await invoke("get_click_event_status"));
+    })();
+  }, []);
 
 
   async function greet() {
