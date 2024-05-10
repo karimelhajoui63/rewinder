@@ -3,21 +3,46 @@
 
 mod screen;
 
-// Learn more about Tauri commands at https://tauri.app/v1/guides/features/command
 #[tauri::command]
-fn greet(app_handle: tauri::AppHandle, name: &str) -> String {
-    let app_dir = app_handle.path_resolver().app_local_data_dir();
-    if let Some(app_dir) = app_dir {
-        println!("app_local_data_dir: {}", app_dir.display());
-    }
+fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
+}
+
+#[tauri::command]
+fn clear_image_history() -> String {
+    screen::clear_screen_dir();
+    "Image history cleared".to_string()
+}
+
+#[tauri::command]
+fn toggle_encryption(enable: bool) -> String {
+    screen::toggle_settings("encryption_enabled", enable);
+    format!("Encryption enabled: {}", enable)
+}
+
+#[tauri::command]
+fn toggle_periodic_capture(enable: bool) -> String {
+    screen::toggle_settings("periodic_capture_enabled", enable);
+    format!("Periodic capture enabled: {}", enable)
+}
+
+#[tauri::command]
+fn toggle_click_event(enable: bool) -> String {
+    screen::toggle_settings("click_event_enabled", enable);
+    format!("Click event enabled: {}", enable)
 }
 
 #[tokio::main]
 async fn main() {
     tauri::Builder::default()
         .setup(screen::setup_handler)
-        .invoke_handler(tauri::generate_handler![greet])
+        .invoke_handler(tauri::generate_handler![
+            greet,
+            clear_image_history,
+            toggle_encryption,
+            toggle_periodic_capture,
+            toggle_click_event
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

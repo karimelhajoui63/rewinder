@@ -3,7 +3,7 @@ use std::{
     fs,
     path::PathBuf,
     sync::Mutex,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use xcap::{image::ImageError, Monitor};
 
@@ -21,6 +21,7 @@ use rdev::{listen, Event};
 use once_cell::sync::Lazy;
 
 static SCREEN_DIR: Lazy<Mutex<PathBuf>> = Lazy::new(|| Mutex::new(PathBuf::new()));
+static APP_DATA_DIR: Lazy<Mutex<PathBuf>> = Lazy::new(|| Mutex::new(PathBuf::new()));
 static KEY: Lazy<Mutex<[u8; 32]>> = Lazy::new(|| Mutex::new([0u8; 32]));
 static NONCE: Lazy<Mutex<[u8; 24]>> = Lazy::new(|| Mutex::new([0u8; 24]));
 
@@ -34,19 +35,71 @@ fn get_current_monitor() -> Monitor {
     }
 }
 
+pub fn clear_screen_dir() {
+    let screen_dir = SCREEN_DIR.lock().unwrap().clone();
+    let _ = fs::remove_dir_all(&screen_dir);
+    let _ = fs::create_dir_all(&screen_dir);
+}
+
 fn save_monitor_screen(monitor: Monitor, to: PathBuf) -> Result<(), ImageError> {
     let _ = fs::create_dir_all(to.clone());
 
     let image = monitor.capture_image().unwrap();
-    return image.save(format!("{}/screenshot.png", to.to_string_lossy()));
+    return image.save(format!(
+        "{}/{}.png",
+        to.to_string_lossy(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+    ));
 }
 
 fn should_capture_screen() -> bool {
     true
 }
 
+fn is_periodic_capture_enabled() -> bool {
+    false
+}
+
+pub fn toggle_settings(setting: &str, enable: bool) {
+    let mut config_json: serde_json::Value = get_config_json();
+    config_json[setting] = serde_json::Value::Bool(enable);
+    fs::write(
+        get_config_path(),
+        serde_json::to_string_pretty(&config_json).unwrap(),
+    )
+    .unwrap();
+}
+
 fn is_encryption_enabled() -> bool {
-    true
+    false
+}
+
+// fn that return the json of the config file and create it if it doesn't exist yet
+fn get_config_json() -> serde_json::Value {
+    let path = get_config_path();
+    if !path.exists() {
+        let default_config = serde_json::json!({
+            "encryption_enabled": false,
+            "periodic_capture_enabled": false,
+            "click_event_enabled": false
+        });
+        fs::write(path, serde_json::to_string_pretty(&default_config).unwrap()).unwrap();
+        return default_config;
+    }
+
+    let config_content = fs::read_to_string(path).unwrap();
+    return serde_json::from_str(&config_content).unwrap();
+}
+
+fn get_config_path() -> PathBuf {
+    PathBuf::from(APP_DATA_DIR.lock().unwrap().clone()).join("config.json")
+}
+
+fn is_click_event_enabled() -> bool {
+    false
 }
 
 fn capture_screen() {
@@ -81,7 +134,7 @@ fn capture_screen_loop() {
     });
 }
 
-fn listen_hardware_event_loop() {
+fn listen_click_event_loop() {
     fn callback(event: Event) {
         if event.event_type == rdev::EventType::ButtonPress(rdev::Button::Left) {
             println!("CLICKED");
@@ -100,29 +153,35 @@ fn listen_hardware_event_loop() {
 }
 
 pub fn setup_handler(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error + 'static>> {
-    if is_encryption_enabled() {
-        fetch_or_generate_key_and_nonce();
-    }
-
     match app.handle().path_resolver().app_data_dir() {
         Some(app_data_dir) => {
             let mut screen_dir = app_data_dir.clone();
             screen_dir.push("screen");
             fs::create_dir_all(&screen_dir)?;
 
+            *APP_DATA_DIR.lock().unwrap() = app_data_dir;
             *SCREEN_DIR.lock().unwrap() = screen_dir;
             println!(
                 "app_local_data_dir: {}",
                 SCREEN_DIR.lock().unwrap().display()
             );
-
-            capture_screen_loop();
-            listen_hardware_event_loop();
         }
         None => {
+            // TODO: warn user that app_data_dir is not found or not accessible
             println!("app_local_data_dir: not found");
         }
     }
+
+    if is_encryption_enabled() {
+        fetch_or_generate_key_and_nonce();
+    }
+    if is_click_event_enabled() {
+        listen_click_event_loop();
+    }
+    if is_periodic_capture_enabled() {
+        capture_screen_loop();
+    }
+
     Ok(())
 }
 
