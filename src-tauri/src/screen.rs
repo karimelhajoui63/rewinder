@@ -84,9 +84,9 @@ fn get_config_json() -> serde_json::Value {
     let path = get_config_path();
     if !path.exists() {
         let default_config = serde_json::json!({
-            "encryption_enabled": true,
+            "encryption_enabled": false,
             "periodic_capture_enabled": false,
-            "click_event_enabled": true
+            "click_event_enabled": false
         });
         fs::write(path, serde_json::to_string_pretty(&default_config).unwrap()).unwrap();
         return default_config;
@@ -153,6 +153,18 @@ fn listen_click_event_loop() {
             println!("Error: {:?}", error)
         }
     });
+}
+
+pub fn get_image_path_from_timestamp(timestamp: u64) -> Option<String> {
+    // retun the path of the image with the given timestamp if it exists, else return None
+    let screen_dir = SCREEN_DIR.lock().unwrap().clone();
+    let image_path = screen_dir.join(format!("{}.png", timestamp));
+    if image_path.is_file() {
+        println!("image_path: {:?}", image_path);
+        return Some(image_path.to_string_lossy().to_string());
+    }
+    println!("image_path NOT EXISTING: {:?}", image_path);
+    None
 }
 
 pub fn setup_handler(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error + 'static>> {

@@ -1,13 +1,11 @@
 import { useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/tauri";
-
+import { invoke, convertFileSrc } from "@tauri-apps/api/tauri";
 
 export default function App() {
-  const [greetMsg, setGreetMsg] = useState("");
-  const [name, setName] = useState("");
   const [encryptionEnabled, setEncryptionEnabled] = useState(false);
   const [periodicCaptureEnabled, setPeriodicCaptureEnabled] = useState(false);
   const [clickEventEnabled, setClickEventEnabled] = useState(false);
+  const [imageUrl, setImageUrl] = useState('');
 
   // Get encryption status (from the backend) once using useEffect, at the initialization, and update the state
   useEffect(() => {
@@ -18,29 +16,41 @@ export default function App() {
     })();
   }, []);
 
-
-  async function greet() {
-    // Learn more about Tauri commands at https://tauri.app/v1/guides/features/command
-    setGreetMsg(await invoke("greet", { name }));
-  }
-
   return (
     <div className="container">
       <h1>Welcome to Tauri!</h1>
+      
+
+      {/* Form that use get_image_path_from_timestamp to update the imageUrl */}
       <form
-        className="row"
-        onSubmit={(e) => {
+        onSubmit={async (e) => {
           e.preventDefault();
-          greet();
+          const timestamp =parseInt(e.currentTarget.timestamp.value);
+          const imagePath = await invoke("get_image_path_from_timestamp", { timestamp }) as string;
+          setImageUrl(convertFileSrc(imagePath));
         }}
       >
-        <input
-          id="greet-input"
-          onChange={(e) => setName(e.currentTarget.value)}
-          placeholder="Enter a name..."
-        />
-        <button type="submit">Greet</button>
+        <input type="text" name="timestamp" placeholder="Enter timestamp" />
+        <button type="submit">Get Image</button>
       </form>
+      
+
+
+      {/* Display the image if imageUrl is not empty */}
+      { imageUrl
+        ? imageUrl !== "asset://localhost/"
+          ?  <img src={imageUrl} alt="Select an image with a timestamp" />
+          : <p>Image not found</p>
+        : <p>Enter a timestamp to view the image</p>
+      }
+
+      {/* {imageUrl && imageUrl !== "asset://localhost/" && (
+        <img src={imageUrl} alt="Select an image with a timestamp" />
+      )} */}
+      
+
+      
+
 
       <br />
 
@@ -90,7 +100,6 @@ export default function App() {
       </button>
         
     
-      <p>{greetMsg}</p>
     </div>
   );
 }

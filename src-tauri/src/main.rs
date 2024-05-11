@@ -47,6 +47,11 @@ fn toggle_click_event(enable: bool) -> String {
     format!("Click event enabled: {}", enable)
 }
 
+#[tauri::command]
+fn get_image_path_from_timestamp(timestamp: u64) -> String {
+    screen::get_image_path_from_timestamp(timestamp).unwrap_or_else(|| "".to_string())
+}
+
 #[tokio::main]
 async fn main() {
     tauri::Builder::default()
@@ -59,7 +64,8 @@ async fn main() {
             toggle_click_event,
             get_encryption_status,
             get_periodic_capture_status,
-            get_click_event_status
+            get_click_event_status,
+            get_image_path_from_timestamp
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
