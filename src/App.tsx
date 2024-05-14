@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { invoke, convertFileSrc } from "@tauri-apps/api/tauri";
+import { invoke } from "@tauri-apps/api/tauri";
 
 export default function App() {
   const [encryptionEnabled, setEncryptionEnabled] = useState(false);
@@ -7,7 +7,6 @@ export default function App() {
   const [clickEventEnabled, setClickEventEnabled] = useState(false);
   const [imageUrl, setImageUrl] = useState('');
 
-  // Get encryption status (from the backend) once using useEffect, at the initialization, and update the state
   useEffect(() => {
     (async () => {
       setEncryptionEnabled(await invoke("get_encryption_status"));
@@ -20,38 +19,27 @@ export default function App() {
     <div className="container">
       <h1>Welcome to Tauri!</h1>
       
-
-      {/* Form that use get_image_path_from_timestamp to update the imageUrl */}
+      {/* Form that use get_image_base64_from_timestamp to update the imageUrl */}
       <form
         onSubmit={async (e) => {
           e.preventDefault();
           const timestamp =parseInt(e.currentTarget.timestamp.value);
-          const imagePath = await invoke("get_image_path_from_timestamp", { timestamp }) as string;
-          setImageUrl(convertFileSrc(imagePath));
+          const imageBase64 = await invoke("get_image_base64_from_timestamp", { timestamp }) as string;
+          setImageUrl(imageBase64);          
         }}
       >
         <input type="text" name="timestamp" placeholder="Enter timestamp" />
         <button type="submit">Get Image</button>
       </form>
       
-
-
       {/* Display the image if imageUrl is not empty */}
       { imageUrl
         ? imageUrl !== "asset://localhost/"
-          ?  <img src={imageUrl} alt="Select an image with a timestamp" />
+          ?  <img src={`data:image/png;base64,${imageUrl}`} alt="Select an image with a timestamp" />
           : <p>Image not found</p>
         : <p>Enter a timestamp to view the image</p>
       }
-
-      {/* {imageUrl && imageUrl !== "asset://localhost/" && (
-        <img src={imageUrl} alt="Select an image with a timestamp" />
-      )} */}
       
-
-      
-
-
       <br />
 
       {/* Button that allow the user to clear the image history */}
@@ -98,7 +86,6 @@ export default function App() {
       >
         {clickEventEnabled ? "Disable" : "Enable"} Click Event
       </button>
-        
     
     </div>
   );

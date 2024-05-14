@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod screen;
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -48,8 +49,15 @@ fn toggle_click_event(enable: bool) -> String {
 }
 
 #[tauri::command]
-fn get_image_path_from_timestamp(timestamp: u64) -> String {
-    screen::get_image_path_from_timestamp(timestamp).unwrap_or_else(|| "".to_string())
+fn get_image_base64_from_timestamp(timestamp: u64) -> String {
+    let image = screen::get_image_from_db(timestamp);
+    match image {
+        Ok(image) => {
+            let base64 = STANDARD.encode(&image);
+            base64
+        }
+        Err(_) => "".to_string(),
+    }
 }
 
 #[tokio::main]
@@ -65,7 +73,7 @@ async fn main() {
             get_encryption_status,
             get_periodic_capture_status,
             get_click_event_status,
-            get_image_path_from_timestamp
+            get_image_base64_from_timestamp
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

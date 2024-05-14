@@ -1,10 +1,12 @@
 use mouse_position::mouse_position::Mouse;
 use std::{
-    fs,
+    fs::{self, File},
+    io::{Cursor, Read},
     path::PathBuf,
     sync::Mutex,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
+
 use xcap::{image::ImageError, Monitor};
 
 use anyhow::anyhow;
@@ -41,18 +43,28 @@ pub fn clear_screen_dir() {
     let _ = fs::create_dir_all(&screen_dir);
 }
 
-fn save_monitor_screen(monitor: Monitor, to: PathBuf) -> Result<(), ImageError> {
-    let _ = fs::create_dir_all(to.clone());
-
+fn save_monitor_screen(monitor: Monitor) -> Result<(), ImageError> {
     let image = monitor.capture_image().unwrap();
-    return image.save(format!(
-        "{}/{}.png",
-        to.to_string_lossy(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs()
-    ));
+
+    // Compress de image with PNG
+    let mut cursor = Cursor::new(Vec::new());
+    // TODO: lower the quality of the image
+    image.write_to(&mut cursor, xcap::image::ImageFormat::Png)?;
+
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+
+    let conn =
+        Connection::open(PathBuf::from(APP_DATA_DIR.lock().unwrap().clone()).join("rewinder.db"))
+            .unwrap();
+
+    let img_data = ImageData::new(timestamp as i64, cursor.into_inner());
+
+    let _ = insert_image(&conn, &img_data);
+
+    return Ok(());
 }
 
 fn should_capture_screen() -> bool {
@@ -107,8 +119,7 @@ pub fn is_click_event_enabled() -> bool {
 
 fn capture_screen() {
     let monitor = get_current_monitor();
-    let screen_dir = SCREEN_DIR.lock().unwrap().clone();
-    match save_monitor_screen(monitor, screen_dir) {
+    match save_monitor_screen(monitor) {
         Ok(_) => println!("Screen captured!"),
         Err(e) => println!("Error: {}", e),
     }
@@ -155,16 +166,13 @@ fn listen_click_event_loop() {
     });
 }
 
-pub fn get_image_path_from_timestamp(timestamp: u64) -> Option<String> {
-    // retun the path of the image with the given timestamp if it exists, else return None
-    let screen_dir = SCREEN_DIR.lock().unwrap().clone();
-    let image_path = screen_dir.join(format!("{}.png", timestamp));
-    if image_path.is_file() {
-        println!("image_path: {:?}", image_path);
-        return Some(image_path.to_string_lossy().to_string());
-    }
-    println!("image_path NOT EXISTING: {:?}", image_path);
-    None
+pub fn get_image_from_db(timestamp: u64) -> Result<Vec<u8>, anyhow::Error> {
+    let conn =
+        Connection::open(PathBuf::from(APP_DATA_DIR.lock().unwrap().clone()).join("rewinder.db"))?;
+
+    let img_data = retrieve_image(&conn, timestamp)?;
+
+    Ok(img_data.data)
 }
 
 pub fn setup_handler(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error + 'static>> {
@@ -196,6 +204,8 @@ pub fn setup_handler(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Err
     if is_periodic_capture_enabled() {
         capture_screen_loop();
     }
+
+    init_sqlite().unwrap();
 
     Ok(())
 }
@@ -311,4 +321,73 @@ fn example_of_how_to_use_encryption() -> Result<(), anyhow::Error> {
     println!("Encryption/Decryption Time: {:?}", duration);
 
     Ok(())
+}
+
+// ======================================= SQLITE ======================================
+
+extern crate image;
+use image::{DynamicImage, ImageFormat, RgbaImage};
+use rusqlite::{params, Connection, Result};
+
+struct ImageData {
+    timestamp: i64,
+    data: Vec<u8>,
+}
+
+impl ImageData {
+    fn new(timestamp: i64, data: Vec<u8>) -> Self {
+        Self { timestamp, data }
+    }
+}
+
+fn init_sqlite() -> Result<()> {
+    // Connect to SQLite database
+    let conn: Connection =
+        Connection::open(PathBuf::from(APP_DATA_DIR.lock().unwrap().clone()).join("rewinder.db"))?;
+
+    // Create table if not exists
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS images (
+                  id INTEGER PRIMARY KEY,
+                  timestamp INTEGER,
+                  data BLOB
+                  )",
+        [],
+    )?;
+
+    Ok(())
+}
+
+fn insert_image(conn: &Connection, img_data: &ImageData) -> Result<()> {
+    // Insert image into database
+    conn.execute(
+        "INSERT INTO images (timestamp, data) VALUES (?1, ?2)",
+        params![img_data.timestamp, img_data.data],
+    )?;
+
+    Ok(())
+}
+
+fn retrieve_image(conn: &Connection, timestamp: u64) -> Result<ImageData> {
+    // Retrieve the image from the database
+    let mut stmt = conn.prepare("SELECT timestamp, data FROM images WHERE timestamp = ?1")?;
+    let img_row = stmt.query_row(params![timestamp], |row| {
+        let timestamp: i64 = row.get(0)?;
+        let data: Vec<u8> = row.get(1)?;
+        Ok((timestamp, data))
+    })?;
+
+    let (timestamp, data) = img_row;
+    Ok(ImageData::new(timestamp, data))
+
+    // let mut stmt =
+    //     conn.prepare("SELECT timestamp, data FROM images ORDER BY timestamp DESC LIMIT 1")?;
+    // let img_row = stmt.query_row([], |row| {
+    //     let timestamp: i64 = row.get(0)?;
+    //     let data: Vec<u8> = row.get(1)?;
+    //     Ok((timestamp, data))
+    // })?;
+
+    // let (timestamp, data) = img_row;
+    // Ok(ImageData::new(timestamp, data))
 }
