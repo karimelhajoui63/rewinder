@@ -35,7 +35,7 @@ export default function App() {
       {/* Display the image if imageUrl is not empty */}
       { imageUrl
         ? imageUrl !== "asset://localhost/"
-          ?  <img src={`data:image/png;base64,${imageUrl}`} alt="Select an image with a timestamp" />
+          ?  <img src={`data:image/jpeg;base64,${imageUrl}`} alt="Select an image with a timestamp" />
           : <p>Image not found</p>
         : <p>Enter a timestamp to view the image</p>
       }

@@ -46,10 +46,14 @@ pub fn clear_screen_dir() {
 fn save_monitor_screen(monitor: Monitor) -> Result<(), ImageError> {
     let image = monitor.capture_image().unwrap();
 
-    // Compress de image with PNG
+    // Convert the Rgba to Rgb in order to use Jpeg format
+    let image = DynamicImage::ImageRgba8(image).to_rgb8();
+
+    // Compress the image with JPEG
     let mut cursor = Cursor::new(Vec::new());
-    // TODO: lower the quality of the image
-    image.write_to(&mut cursor, xcap::image::ImageFormat::Png)?;
+    // TODO: allow the user to set the quality
+    let encoder = JpegEncoder::new_with_quality(&mut cursor, 95);
+    image.write_with_encoder(encoder)?;
 
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -126,7 +130,7 @@ fn capture_screen() {
 }
 
 fn capture_screen_loop() {
-    const INTERVAL_SEC: u64 = 30;
+    const INTERVAL_SEC: u64 = 10;
 
     spawn(async move {
         let mut interval = interval(Duration::from_secs(INTERVAL_SEC));
@@ -326,7 +330,7 @@ fn example_of_how_to_use_encryption() -> Result<(), anyhow::Error> {
 // ======================================= SQLITE ======================================
 
 extern crate image;
-use image::{DynamicImage, ImageFormat, RgbaImage};
+use image::{codecs::jpeg::JpegEncoder, DynamicImage};
 use rusqlite::{params, Connection, Result};
 
 struct ImageData {
