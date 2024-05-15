@@ -11,7 +11,7 @@ fn greet(name: &str) -> String {
 
 #[tauri::command]
 fn clear_image_history() -> String {
-    screen::clear_screen_dir();
+    screen::delete_db();
     "Image history cleared".to_string()
 }
 

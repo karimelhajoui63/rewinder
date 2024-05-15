@@ -1,7 +1,7 @@
 use mouse_position::mouse_position::Mouse;
 use std::{
-    fs::{self, File},
-    io::{Cursor, Read},
+    fs::{self},
+    io::Cursor,
     path::PathBuf,
     sync::Mutex,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -22,7 +22,6 @@ use rdev::{listen, Event};
 
 use once_cell::sync::Lazy;
 
-static SCREEN_DIR: Lazy<Mutex<PathBuf>> = Lazy::new(|| Mutex::new(PathBuf::new()));
 static APP_DATA_DIR: Lazy<Mutex<PathBuf>> = Lazy::new(|| Mutex::new(PathBuf::new()));
 static KEY: Lazy<Mutex<[u8; 32]>> = Lazy::new(|| Mutex::new([0u8; 32]));
 static NONCE: Lazy<Mutex<[u8; 24]>> = Lazy::new(|| Mutex::new([0u8; 24]));
@@ -37,10 +36,11 @@ fn get_current_monitor() -> Monitor {
     }
 }
 
-pub fn clear_screen_dir() {
-    let screen_dir = SCREEN_DIR.lock().unwrap().clone();
-    let _ = fs::remove_dir_all(&screen_dir);
-    let _ = fs::create_dir_all(&screen_dir);
+pub fn delete_db() {
+    // remove the sqlite db file
+    fs::remove_file(PathBuf::from(APP_DATA_DIR.lock().unwrap().clone()).join("sqlite.db"))
+        .expect("Unable to delete file");
+    init_sqlite().unwrap();
 }
 
 fn save_monitor_screen(monitor: Monitor) -> Result<(), ImageError> {
@@ -61,10 +61,20 @@ fn save_monitor_screen(monitor: Monitor) -> Result<(), ImageError> {
         .as_secs();
 
     let conn =
-        Connection::open(PathBuf::from(APP_DATA_DIR.lock().unwrap().clone()).join("rewinder.db"))
+        Connection::open(PathBuf::from(APP_DATA_DIR.lock().unwrap().clone()).join("sqlite.db"))
             .unwrap();
 
-    let img_data = ImageData::new(timestamp as i64, cursor.into_inner());
+    let is_encryption_enabled = is_encryption_enabled();
+
+    if is_encryption_enabled {
+        cursor = Cursor::new(encrypt_text(cursor.into_inner()).unwrap());
+    }
+
+    let img_data = ImageData::new(
+        timestamp as i64,
+        cursor.into_inner(),
+        Some(is_encryption_enabled),
+    );
 
     let _ = insert_image(&conn, &img_data);
 
@@ -143,7 +153,7 @@ fn capture_screen_loop() {
                 let elapsed_time = start_time.elapsed();
                 println!("capture_screen took: {:?}", elapsed_time);
                 // Save the elapsed time into a file
-                let mut output_path = SCREEN_DIR.lock().unwrap().clone();
+                let mut output_path = APP_DATA_DIR.lock().unwrap().clone();
                 output_path.push("elapsed_time.txt");
                 fs::write(output_path, format!("{:?}", elapsed_time))
                     .expect("Unable to write file");
@@ -172,7 +182,7 @@ fn listen_click_event_loop() {
 
 pub fn get_image_from_db(timestamp: u64) -> Result<Vec<u8>, anyhow::Error> {
     let conn =
-        Connection::open(PathBuf::from(APP_DATA_DIR.lock().unwrap().clone()).join("rewinder.db"))?;
+        Connection::open(PathBuf::from(APP_DATA_DIR.lock().unwrap().clone()).join("sqlite.db"))?;
 
     let img_data = retrieve_image(&conn, timestamp)?;
 
@@ -182,16 +192,7 @@ pub fn get_image_from_db(timestamp: u64) -> Result<Vec<u8>, anyhow::Error> {
 pub fn setup_handler(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error + 'static>> {
     match app.handle().path_resolver().app_data_dir() {
         Some(app_data_dir) => {
-            let mut screen_dir = app_data_dir.clone();
-            screen_dir.push("screen");
-            fs::create_dir_all(&screen_dir)?;
-
             *APP_DATA_DIR.lock().unwrap() = app_data_dir;
-            *SCREEN_DIR.lock().unwrap() = screen_dir;
-            println!(
-                "app_local_data_dir: {}",
-                SCREEN_DIR.lock().unwrap().display()
-            );
         }
         None => {
             // TODO: warn user that app_data_dir is not found or not accessible
@@ -214,38 +215,30 @@ pub fn setup_handler(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Err
     Ok(())
 }
 
-fn encrypt_small_file(filepath: &str, dist: &str) -> Result<(), anyhow::Error> {
+fn encrypt_text(plain_text: Vec<u8>) -> Result<Vec<u8>, anyhow::Error> {
     let key = KEY.lock().unwrap().clone();
     let nonce = NONCE.lock().unwrap().clone();
 
     let cipher = XChaCha20Poly1305::new(&key.into());
 
-    let file_data = fs::read(filepath)?;
-
-    let encrypted_file = cipher
-        .encrypt(&nonce.into(), file_data.as_ref())
+    let cipher_text = cipher
+        .encrypt(&nonce.into(), plain_text.as_ref())
         .map_err(|err| anyhow!("Encrypting small file: {}", err))?;
 
-    fs::write(&dist, encrypted_file)?;
-
-    Ok(())
+    Ok(cipher_text)
 }
 
-fn decrypt_small_file(encrypted_file_path: &str, dist: &str) -> Result<(), anyhow::Error> {
+fn decrypt_text(cipher_text: Vec<u8>) -> Result<Vec<u8>, anyhow::Error> {
     let key = KEY.lock().unwrap().clone();
     let nonce = NONCE.lock().unwrap().clone();
 
     let cipher = XChaCha20Poly1305::new(&key.into());
 
-    let file_data = fs::read(encrypted_file_path)?;
-
-    let decrypted_file = cipher
-        .decrypt(&nonce.into(), file_data.as_ref())
+    let plain_text = cipher
+        .decrypt(&nonce.into(), cipher_text.as_ref())
         .map_err(|err| anyhow!("Decrypting small file: {}", err))?;
 
-    fs::write(&dist, decrypted_file)?;
-
-    Ok(())
+    Ok(plain_text)
 }
 
 fn generate_random_key_and_nonce() -> ([u8; 32], [u8; 24]) {
@@ -312,21 +305,6 @@ fn to_bytes(s: &str) -> Vec<u8> {
     s.chars().map(|c| c as u8).collect()
 }
 
-fn example_of_how_to_use_encryption() -> Result<(), anyhow::Error> {
-    let start = Instant::now();
-
-    println!("Encrypting image.png to image.encrypted");
-    encrypt_small_file("src/image.png", "src/image.encrypted")?;
-
-    println!("Decrypting image.encrypted to image.decrypted");
-    decrypt_small_file("src/image.encrypted", "src/image.decrypted.png")?;
-
-    let duration = start.elapsed();
-    println!("Encryption/Decryption Time: {:?}", duration);
-
-    Ok(())
-}
-
 // ======================================= SQLITE ======================================
 
 extern crate image;
@@ -336,25 +314,31 @@ use rusqlite::{params, Connection, Result};
 struct ImageData {
     timestamp: i64,
     data: Vec<u8>,
+    encrypted: Option<bool>,
 }
 
 impl ImageData {
-    fn new(timestamp: i64, data: Vec<u8>) -> Self {
-        Self { timestamp, data }
+    fn new(timestamp: i64, data: Vec<u8>, encrypted: Option<bool>) -> Self {
+        Self {
+            timestamp,
+            data,
+            encrypted,
+        }
     }
 }
 
 fn init_sqlite() -> Result<()> {
     // Connect to SQLite database
     let conn: Connection =
-        Connection::open(PathBuf::from(APP_DATA_DIR.lock().unwrap().clone()).join("rewinder.db"))?;
+        Connection::open(PathBuf::from(APP_DATA_DIR.lock().unwrap().clone()).join("sqlite.db"))?;
 
     // Create table if not exists
     conn.execute(
         "CREATE TABLE IF NOT EXISTS images (
                   id INTEGER PRIMARY KEY,
                   timestamp INTEGER,
-                  data BLOB
+                  data BLOB,
+                  encrypted INTEGER
                   )",
         [],
     )?;
@@ -364,9 +348,10 @@ fn init_sqlite() -> Result<()> {
 
 fn insert_image(conn: &Connection, img_data: &ImageData) -> Result<()> {
     // Insert image into database
+    println!("Inserting image into database...");
     conn.execute(
-        "INSERT INTO images (timestamp, data) VALUES (?1, ?2)",
-        params![img_data.timestamp, img_data.data],
+        "INSERT INTO images (timestamp, data, encrypted) VALUES (?1, ?2, ?3)",
+        params![img_data.timestamp, img_data.data, img_data.encrypted],
     )?;
 
     Ok(())
@@ -374,24 +359,28 @@ fn insert_image(conn: &Connection, img_data: &ImageData) -> Result<()> {
 
 fn retrieve_image(conn: &Connection, timestamp: u64) -> Result<ImageData> {
     // Retrieve the image from the database
-    let mut stmt = conn.prepare("SELECT timestamp, data FROM images WHERE timestamp = ?1")?;
+    let mut stmt =
+        conn.prepare("SELECT timestamp, data, encrypted FROM images WHERE timestamp = ?1")?;
     let img_row = stmt.query_row(params![timestamp], |row| {
         let timestamp: i64 = row.get(0)?;
         let data: Vec<u8> = row.get(1)?;
-        Ok((timestamp, data))
+        let encrypted: bool = row.get(2)?;
+        Ok((timestamp, data, encrypted))
     })?;
 
-    let (timestamp, data) = img_row;
-    Ok(ImageData::new(timestamp, data))
+    let (timestamp, mut data, encrypted) = img_row;
 
-    // let mut stmt =
-    //     conn.prepare("SELECT timestamp, data FROM images ORDER BY timestamp DESC LIMIT 1")?;
-    // let img_row = stmt.query_row([], |row| {
-    //     let timestamp: i64 = row.get(0)?;
-    //     let data: Vec<u8> = row.get(1)?;
-    //     Ok((timestamp, data))
-    // })?;
+    if encrypted {
+        let decrypted_data = decrypt_text(data);
+        match decrypted_data {
+            Ok(decrypted_data) => {
+                data = decrypted_data;
+            }
+            Err(_) => {
+                return Err(rusqlite::Error::QueryReturnedNoRows);
+            }
+        }
+    }
 
-    // let (timestamp, data) = img_row;
-    // Ok(ImageData::new(timestamp, data))
+    Ok(ImageData::new(timestamp, data, None))
 }
