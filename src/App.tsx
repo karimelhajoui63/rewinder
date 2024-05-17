@@ -6,6 +6,7 @@ export default function App() {
   const [periodicCaptureEnabled, setPeriodicCaptureEnabled] = useState(false);
   const [clickEventEnabled, setClickEventEnabled] = useState(false);
   const [imageUrl, setImageUrl] = useState('');
+  const [errorMessage, setErrorMessage] = useState('');
 
   useEffect(() => {
     (async () => {
@@ -15,9 +16,20 @@ export default function App() {
     })();
   }, []);
 
+  // Display error message for 10 seconds
+  useEffect(() => {
+    if (errorMessage) {
+      setTimeout(() => setErrorMessage(''), 10000);
+    }
+  }, [errorMessage]);
+
+
   return (
     <div className="container">
       <h1>Welcome to Tauri!</h1>
+
+      {/* Display error message in red */}
+      {errorMessage && <p style={{ color: "red" }}>Error: {errorMessage}</p>}
       
       {/* Form that use get_image_base64_from_timestamp to update the imageUrl */}
       <form
@@ -53,11 +65,30 @@ export default function App() {
 
       <br />
 
+      {/* Button that allow the user to delete their credentials */}
+      <button
+        onClick={async () => {
+          await invoke("delete_credentials");
+        }}
+      >
+        Delete credentials
+      </button>
+
+      <br />
+
       {/* Toggle button to enabled/disable encryption */}
       <button
         onClick={async () => {
-          setEncryptionEnabled(!encryptionEnabled);
-          await invoke("toggle_encryption", { enable: !encryptionEnabled });
+          var enabled = encryptionEnabled;
+          try {
+            enabled = await invoke("toggle_encryption", { enable: !encryptionEnabled }) as boolean;
+          } catch (error) {
+            setErrorMessage(error as string);
+          } finally {
+            setEncryptionEnabled(enabled);
+          }
+          
+          
         }}
       >
         {encryptionEnabled ? "Disable" : "Enable"} Encryption

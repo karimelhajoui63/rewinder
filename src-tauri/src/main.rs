@@ -16,14 +16,19 @@ fn clear_image_history() -> String {
 }
 
 #[tauri::command]
+fn delete_credentials() -> String {
+    screen::delete_key_and_nonce();
+    "Credentials deleted".to_string()
+}
+
+#[tauri::command]
 fn get_encryption_status() -> bool {
     screen::is_encryption_enabled()
 }
 
 #[tauri::command]
-fn toggle_encryption(enable: bool) -> String {
-    screen::toggle_settings("encryption_enabled", enable);
-    format!("Encryption enabled: {}", enable)
+fn toggle_encryption(enable: bool) -> Result<bool, String> {
+    screen::toggle_encryption(enable)
 }
 
 #[tauri::command]
@@ -32,9 +37,8 @@ fn get_periodic_capture_status() -> bool {
 }
 
 #[tauri::command]
-fn toggle_periodic_capture(enable: bool) -> String {
-    screen::toggle_settings("periodic_capture_enabled", enable);
-    format!("Periodic capture enabled: {}", enable)
+fn toggle_periodic_capture(enable: bool) -> Result<bool, String> {
+    screen::toggle_periodic_capture(enable)
 }
 
 #[tauri::command]
@@ -43,9 +47,8 @@ fn get_click_event_status() -> bool {
 }
 
 #[tauri::command]
-fn toggle_click_event(enable: bool) -> String {
-    screen::toggle_settings("click_event_enabled", enable);
-    format!("Click event enabled: {}", enable)
+fn toggle_click_event(enable: bool) -> Result<bool, String> {
+    screen::toggle_click_event(enable)
 }
 
 #[tauri::command]
@@ -67,6 +70,7 @@ async fn main() {
         .invoke_handler(tauri::generate_handler![
             greet,
             clear_image_history,
+            delete_credentials,
             toggle_encryption,
             toggle_periodic_capture,
             toggle_click_event,

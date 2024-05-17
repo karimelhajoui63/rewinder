@@ -1,13 +1,13 @@
 use mouse_position::mouse_position::Mouse;
 use std::{
-    fs::{self},
+    fs,
     io::Cursor,
     path::PathBuf,
     sync::Mutex,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-use xcap::{image::ImageError, Monitor};
+use xcap::Monitor;
 
 use anyhow::anyhow;
 use chacha20poly1305::{
@@ -43,7 +43,7 @@ pub fn delete_db() {
     init_sqlite().unwrap();
 }
 
-fn save_monitor_screen(monitor: Monitor) -> Result<(), ImageError> {
+fn save_monitor_screen(monitor: Monitor) -> Result<(), anyhow::Error> {
     let image = monitor.capture_image().unwrap();
 
     // Convert the Rgba to Rgb in order to use Jpeg format
@@ -67,7 +67,15 @@ fn save_monitor_screen(monitor: Monitor) -> Result<(), ImageError> {
     let is_encryption_enabled = is_encryption_enabled();
 
     if is_encryption_enabled {
-        cursor = Cursor::new(encrypt_text(cursor.into_inner()).unwrap());
+        match encrypt_cursor(cursor.clone()) {
+            Ok(encrypted_cursor) => {
+                cursor = encrypted_cursor;
+            }
+            Err(_) => {
+                println!("desabling encryption...");
+                update_settings_in_config_file("encryption_enabled", false);
+            }
+        }
     }
 
     let img_data = ImageData::new(
@@ -81,6 +89,33 @@ fn save_monitor_screen(monitor: Monitor) -> Result<(), ImageError> {
     return Ok(());
 }
 
+fn encrypt_cursor(cursor: Cursor<Vec<u8>>) -> Result<Cursor<Vec<u8>>, anyhow::Error> {
+    let encrypted_text;
+    match encrypt_text(cursor.clone().into_inner()) {
+        Ok(encrypted_data) => {
+            encrypted_text = encrypted_data;
+        }
+        Err(_) => {
+            // Try to fetch or generate key and nonce again
+            match fetch_or_generate_key_and_nonce() {
+                Ok(_) => match encrypt_text(cursor.into_inner()) {
+                    Ok(encrypted_data) => {
+                        encrypted_text = encrypted_data;
+                    }
+                    Err(_) => {
+                        return Err(anyhow!("Error encrypting image"));
+                    }
+                },
+                Err(_) => {
+                    println!("Error fetching or generating key and nonce, desabling encryption...");
+                    return Err(anyhow!("Error fetching or generating key and nonce"));
+                }
+            }
+        }
+    }
+    return Ok(Cursor::new(encrypted_text));
+}
+
 fn should_capture_screen() -> bool {
     true
 }
@@ -90,7 +125,30 @@ pub fn is_periodic_capture_enabled() -> bool {
     return config_json["periodic_capture_enabled"].as_bool().unwrap();
 }
 
-pub fn toggle_settings(setting: &str, enable: bool) {
+pub fn toggle_encryption(enable: bool) -> Result<bool, String> {
+    if enable {
+        match fetch_or_generate_key_and_nonce() {
+            Ok(_) => {}
+            Err(_) => {
+                return Err("Error fetching or generating key and nonce".into());
+            }
+        }
+    }
+    update_settings_in_config_file("encryption_enabled", enable);
+    return Ok(enable);
+}
+
+pub fn toggle_periodic_capture(enable: bool) -> Result<bool, String> {
+    update_settings_in_config_file("periodic_capture_enabled", enable);
+    Ok(enable)
+}
+
+pub fn toggle_click_event(enable: bool) -> Result<bool, String> {
+    update_settings_in_config_file("click_event_enabled", enable);
+    Ok(enable)
+}
+
+fn update_settings_in_config_file(setting: &str, enable: bool) {
     let mut config_json: serde_json::Value = get_config_json();
     config_json[setting] = serde_json::Value::Bool(enable);
     fs::write(
@@ -154,7 +212,7 @@ fn capture_screen_loop() {
                 println!("capture_screen took: {:?}", elapsed_time);
                 // Save the elapsed time into a file
                 let mut output_path = APP_DATA_DIR.lock().unwrap().clone();
-                output_path.push("elapsed_time.txt");
+                output_path.push("test_elapsed_time.txt");
                 fs::write(output_path, format!("{:?}", elapsed_time))
                     .expect("Unable to write file");
             }
@@ -201,7 +259,13 @@ pub fn setup_handler(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Err
     }
 
     if is_encryption_enabled() {
-        fetch_or_generate_key_and_nonce();
+        match fetch_or_generate_key_and_nonce() {
+            Ok(_) => {}
+            Err(_) => {
+                println!("Error fetching or generating key and nonce, desabling encryption...");
+                update_settings_in_config_file("encryption_enabled", false);
+            }
+        }
     }
     if is_click_event_enabled() {
         listen_click_event_loop();
@@ -219,6 +283,13 @@ fn encrypt_text(plain_text: Vec<u8>) -> Result<Vec<u8>, anyhow::Error> {
     let key = KEY.lock().unwrap().clone();
     let nonce = NONCE.lock().unwrap().clone();
 
+    if key == [0u8; 32] || nonce == [0u8; 24] {
+        return Err(anyhow!("Key or nonce is empty"));
+    }
+
+    println!("Key: {:?}", to_string(&key));
+    println!("Nonce: {}", to_string(&nonce));
+
     let cipher = XChaCha20Poly1305::new(&key.into());
 
     let cipher_text = cipher
@@ -231,6 +302,10 @@ fn encrypt_text(plain_text: Vec<u8>) -> Result<Vec<u8>, anyhow::Error> {
 fn decrypt_text(cipher_text: Vec<u8>) -> Result<Vec<u8>, anyhow::Error> {
     let key = KEY.lock().unwrap().clone();
     let nonce = NONCE.lock().unwrap().clone();
+
+    if key == [0u8; 32] || nonce == [0u8; 24] {
+        return Err(anyhow!("Key or nonce is empty"));
+    }
 
     let cipher = XChaCha20Poly1305::new(&key.into());
 
@@ -250,12 +325,16 @@ fn generate_random_key_and_nonce() -> ([u8; 32], [u8; 24]) {
     (key, nonce)
 }
 
-fn delete_key_and_nonce() {
+pub fn delete_key_and_nonce() {
+    println!("Deleting key and nonce...");
     keytar::delete_password("rewinder", "encryption_key").unwrap();
     keytar::delete_password("rewinder", "encryption_nonce").unwrap();
+    // reset the key and nonce
+    *KEY.lock().unwrap() = [0u8; 32];
+    *NONCE.lock().unwrap() = [0u8; 24];
 }
 
-fn fetch_or_generate_key_and_nonce() {
+fn fetch_or_generate_key_and_nonce() -> Result<(), anyhow::Error> {
     let mut should_generate_key_and_nonce = false;
     let mut key = [0u8; 32];
     let mut nonce = [0u8; 24];
@@ -270,7 +349,11 @@ fn fetch_or_generate_key_and_nonce() {
                 println!("Key: {:?}", to_string(&key));
             }
         }
-        Err(_) => should_generate_key_and_nonce = true,
+        Err(_) => {
+            println!("Error getting key");
+            return Err(anyhow!("Error getting key"));
+            // should_generate_key_and_nonce = true;
+        }
     }
 
     match keytar::get_password("rewinder", "encryption_nonce") {
@@ -282,18 +365,34 @@ fn fetch_or_generate_key_and_nonce() {
                 println!("Nonce: {}", to_string(&nonce));
             }
         }
-        Err(_) => should_generate_key_and_nonce = true,
+        Err(_) => {
+            println!("Error getting nonce");
+            return Err(anyhow!("Error getting key"));
+            // should_generate_key_and_nonce = true;
+        }
     }
 
     if should_generate_key_and_nonce {
         println!("Generating key and nonce...");
         let (key, nonce) = generate_random_key_and_nonce();
-        keytar::set_password("rewinder", "encryption_key", &to_string(&key)).unwrap();
-        keytar::set_password("rewinder", "encryption_nonce", &to_string(&nonce)).unwrap();
+        match keytar::set_password("rewinder", "encryption_key", &to_string(&key)) {
+            Ok(_) => {}
+            Err(_) => {
+                println!("Error setting key");
+            }
+        }
+        match keytar::set_password("rewinder", "encryption_nonce", &to_string(&nonce)) {
+            Ok(_) => {}
+            Err(_) => {
+                println!("Error setting nonce");
+            }
+        }
     }
 
     *KEY.lock().unwrap() = key;
     *NONCE.lock().unwrap() = nonce;
+
+    Ok(())
 }
 
 fn to_string(v: &[u8]) -> String {
