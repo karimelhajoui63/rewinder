@@ -2,7 +2,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod screen;
-use base64::{engine::general_purpose::STANDARD, Engine as _};
 
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -53,12 +52,9 @@ fn toggle_click_event(enable: bool) -> Result<bool, String> {
 
 #[tauri::command]
 fn get_image_base64_from_timestamp(timestamp: u64) -> String {
-    let image = screen::get_image_from_db(timestamp);
+    let image = screen::get_image_base64_from_db(timestamp);
     match image {
-        Ok(image) => {
-            let base64 = STANDARD.encode(&image);
-            base64
-        }
+        Ok(image) => image,
         Err(_) => "".to_string(),
     }
 }
