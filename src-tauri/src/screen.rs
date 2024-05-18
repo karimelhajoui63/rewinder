@@ -71,45 +71,17 @@ fn save_monitor_screen(monitor: Monitor) -> Result<(), anyhow::Error> {
         Connection::open(PathBuf::from(APP_DATA_DIR.lock().unwrap().clone()).join("sqlite.db"))
             .unwrap();
 
-    let mut base64 = STANDARD.encode(&cursor.into_inner());
-    let mut thumbnail_base64 = STANDARD.encode(&thumbnail_cursor.into_inner());
+    let base64 = STANDARD.encode(&cursor.into_inner());
+    let thumbnail_base64 = STANDARD.encode(&thumbnail_cursor.into_inner());
 
-    let is_encryption_enabled = is_encryption_enabled();
+    let img_dto = ImageDTO::new(timestamp, base64, thumbnail_base64);
 
-    if is_encryption_enabled {
-        match try_encrypt_text(base64.clone()) {
-            Ok(encrypted_base64) => {
-                base64 = encrypted_base64;
-            }
-            Err(_) => {
-                println!("desabling encryption...");
-                update_settings_in_config_file("encryption_enabled", false);
-            }
-        }
-        match try_encrypt_text(thumbnail_base64.clone()) {
-            Ok(encrypted_thumbnail_base64) => {
-                thumbnail_base64 = encrypted_thumbnail_base64;
-            }
-            Err(_) => {
-                println!("desabling encryption...");
-                update_settings_in_config_file("encryption_enabled", false);
-            }
-        }
-    }
-
-    let img_data = ImageData::new(
-        timestamp as i64,
-        base64,
-        thumbnail_base64,
-        Some(is_encryption_enabled),
-    );
-
-    let _ = insert_image(&conn, &img_data);
+    let _ = insert_image(&conn, &img_dto);
 
     return Ok(());
 }
 
-fn try_encrypt_text(plain_text: String) -> Result<String, anyhow::Error> {
+fn try_encrypt_text(plain_text: Vec<u8>) -> Result<Vec<u8>, anyhow::Error> {
     let encrypted_text;
     match encrypt_text(plain_text.clone()) {
         Ok(encrypted_data) => {
@@ -262,9 +234,9 @@ pub fn get_image_base64_from_db(timestamp: u64) -> Result<String, anyhow::Error>
     let conn =
         Connection::open(PathBuf::from(APP_DATA_DIR.lock().unwrap().clone()).join("sqlite.db"))?;
 
-    let img_data = retrieve_image(&conn, timestamp)?;
+    let img_dto = retrieve_image(&conn, timestamp)?;
 
-    Ok(img_data.base64)
+    Ok(img_dto.base64)
 }
 
 pub fn setup_handler(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error + 'static>> {
@@ -299,7 +271,7 @@ pub fn setup_handler(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Err
     Ok(())
 }
 
-fn encrypt_text(plain_text: String) -> Result<String, anyhow::Error> {
+fn encrypt_text(plain_text: Vec<u8>) -> Result<Vec<u8>, anyhow::Error> {
     let key = KEY.lock().unwrap().clone();
     let nonce = NONCE.lock().unwrap().clone();
 
@@ -312,14 +284,14 @@ fn encrypt_text(plain_text: String) -> Result<String, anyhow::Error> {
 
     let cipher = XChaCha20Poly1305::new(&key.into());
 
-    let cipher_text = cipher
+    let cipher_text: Vec<u8> = cipher
         .encrypt(&nonce.into(), plain_text.as_ref())
         .map_err(|err| anyhow!("Encrypting small file: {}", err))?;
 
-    Ok(String::from_utf8(cipher_text).expect("Found invalid UTF-8"))
+    Ok(cipher_text)
 }
 
-fn decrypt_text(cipher_text: String) -> Result<String, anyhow::Error> {
+fn decrypt_text(cipher_text: Vec<u8>) -> Result<Vec<u8>, anyhow::Error> {
     let key = KEY.lock().unwrap().clone();
     let nonce = NONCE.lock().unwrap().clone();
 
@@ -333,7 +305,7 @@ fn decrypt_text(cipher_text: String) -> Result<String, anyhow::Error> {
         .decrypt(&nonce.into(), cipher_text.as_ref())
         .map_err(|err| anyhow!("Decrypting small file: {}", err))?;
 
-    Ok(String::from_utf8(plain_text).expect("Found invalid UTF-8"))
+    Ok(plain_text)
 }
 
 fn generate_random_key_and_nonce() -> ([u8; 32], [u8; 24]) {
@@ -430,25 +402,18 @@ extern crate image;
 use image::{codecs::jpeg::JpegEncoder, DynamicImage};
 use rusqlite::{params, Connection, Result};
 
-struct ImageData {
-    timestamp: i64,
+struct ImageDTO {
+    timestamp: u64,
     base64: String,
     thumbnail_base64: String,
-    encrypted: Option<bool>,
 }
 
-impl ImageData {
-    fn new(
-        timestamp: i64,
-        base64: String,
-        thumbnail_base64: String,
-        encrypted: Option<bool>,
-    ) -> Self {
+impl ImageDTO {
+    fn new(timestamp: u64, base64: String, thumbnail_base64: String) -> Self {
         Self {
             timestamp,
             base64,
             thumbnail_base64,
-            encrypted,
         }
     }
 }
@@ -463,8 +428,8 @@ fn init_sqlite() -> Result<()> {
         "CREATE TABLE IF NOT EXISTS images (
                   id INTEGER PRIMARY KEY,
                   timestamp INTEGER,
-                  base64 TEXT,
-                  thumbnail_base64 TEXT,
+                  base64 BLOB,
+                  thumbnail_base64 BLOB,
                   encrypted INTEGER
                   )",
         [],
@@ -473,26 +438,55 @@ fn init_sqlite() -> Result<()> {
     Ok(())
 }
 
-fn insert_image(conn: &Connection, img_data: &ImageData) -> Result<()> {
+fn insert_image(conn: &Connection, img_dto: &ImageDTO) -> Result<()> {
+    let mut base64 = Vec::new();
+    let mut thumbnail_base64 = Vec::new();
+
+    let is_encryption_enabled = is_encryption_enabled();
+
+    if is_encryption_enabled {
+        match try_encrypt_text(img_dto.base64.clone().into_bytes()) {
+            Ok(encrypted_base64) => {
+                base64 = encrypted_base64;
+            }
+            Err(_) => {
+                println!("disabling encryption...");
+                update_settings_in_config_file("encryption_enabled", false);
+            }
+        }
+        match try_encrypt_text(img_dto.thumbnail_base64.clone().into_bytes()) {
+            Ok(encrypted_thumbnail_base64) => {
+                thumbnail_base64 = encrypted_thumbnail_base64;
+            }
+            Err(_) => {
+                println!("desabling encryption...");
+                update_settings_in_config_file("encryption_enabled", false);
+            }
+        }
+    } else {
+        base64 = img_dto.base64.clone().into_bytes();
+        thumbnail_base64 = img_dto.thumbnail_base64.clone().into_bytes();
+    }
+
     // Insert image into database
     println!("Inserting image into database...");
     conn.execute(
         "INSERT INTO images (timestamp, base64, thumbnail_base64, encrypted) VALUES (?1, ?2, ?3, ?4)",
-        params![img_data.timestamp, img_data.base64, img_data.thumbnail_base64, img_data.encrypted],
+        params![img_dto.timestamp, base64, thumbnail_base64, is_encryption_enabled],
     )?;
 
     Ok(())
 }
 
-fn retrieve_image(conn: &Connection, timestamp: u64) -> Result<ImageData> {
+fn retrieve_image(conn: &Connection, timestamp: u64) -> Result<ImageDTO> {
     // Retrieve the image from the database
     let mut stmt = conn.prepare(
         "SELECT timestamp, base64, thumbnail_base64, encrypted FROM images WHERE timestamp = ?1",
     )?;
     let img_row = stmt.query_row(params![timestamp], |row| {
-        let timestamp: i64 = row.get(0)?;
-        let base64: String = row.get(1)?;
-        let thumbnail_base64: String = row.get(2)?;
+        let timestamp: u64 = row.get(0)?;
+        let base64: Vec<u8> = row.get(1)?;
+        let thumbnail_base64: Vec<u8> = row.get(2)?;
         let encrypted: bool = row.get(3)?;
         Ok((timestamp, base64, thumbnail_base64, encrypted))
     })?;
@@ -511,5 +505,9 @@ fn retrieve_image(conn: &Connection, timestamp: u64) -> Result<ImageData> {
         }
     }
 
-    Ok(ImageData::new(timestamp, base64, thumbnail_base64, None))
+    Ok(ImageDTO::new(
+        timestamp,
+        String::from_utf8(base64).expect("Error converting base64 to string"),
+        String::from_utf8(thumbnail_base64).expect("Error converting thumbnail base64 to string"),
+    ))
 }
