@@ -478,29 +478,38 @@ fn insert_image(conn: &Connection, img_dto: &ImageDTO) -> Result<()> {
     Ok(())
 }
 
-fn retrieve_image(conn: &Connection, timestamp: u64) -> Result<ImageDTO> {
+fn retrieve_image(conn: &Connection, timestamp: u64) -> Result<ImageDTO, anyhow::Error> {
     // Retrieve the image from the database
     let mut stmt = conn.prepare(
         "SELECT timestamp, base64, thumbnail_base64, encrypted FROM images WHERE timestamp = ?1",
     )?;
-    let img_row = stmt.query_row(params![timestamp], |row| {
-        let timestamp: u64 = row.get(0)?;
-        let base64: Vec<u8> = row.get(1)?;
-        let thumbnail_base64: Vec<u8> = row.get(2)?;
-        let encrypted: bool = row.get(3)?;
-        Ok((timestamp, base64, thumbnail_base64, encrypted))
-    })?;
+    let img_row = stmt
+        .query_row(params![timestamp], |row| {
+            let timestamp: u64 = row.get(0)?;
+            let base64: Vec<u8> = row.get(1)?;
+            let thumbnail_base64: Vec<u8> = row.get(2)?;
+            let encrypted: bool = row.get(3)?;
+            Ok((timestamp, base64, thumbnail_base64, encrypted))
+        })
+        .expect("Error retrieving image from database");
 
-    let (timestamp, mut base64, thumbnail_base64, encrypted) = img_row;
+    let (timestamp, mut base64, mut thumbnail_base64, encrypted) = img_row;
 
     if encrypted {
-        let decrypted_base64 = decrypt_text(base64);
-        match decrypted_base64 {
+        match decrypt_text(base64) {
             Ok(decrypted_base64) => {
                 base64 = decrypted_base64;
             }
             Err(_) => {
-                return Err(rusqlite::Error::QueryReturnedNoRows);
+                return Err(anyhow!("Error decrypting image base64"));
+            }
+        }
+        match decrypt_text(thumbnail_base64) {
+            Ok(decrypted_thumbnail_base64) => {
+                thumbnail_base64 = decrypted_thumbnail_base64;
+            }
+            Err(_) => {
+                return Err(anyhow!("Error decrypting thumbnail base64"));
             }
         }
     }

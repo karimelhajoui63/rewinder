@@ -51,11 +51,10 @@ fn toggle_click_event(enable: bool) -> Result<bool, String> {
 }
 
 #[tauri::command]
-fn get_image_base64_from_timestamp(timestamp: u64) -> String {
-    let image = screen::get_image_base64_from_db(timestamp);
-    match image {
-        Ok(image) => image,
-        Err(_) => "".to_string(),
+fn get_image_base64_from_timestamp(timestamp: u64) -> Result<String, String> {
+    match screen::get_image_base64_from_db(timestamp) {
+        Ok(image) => Ok(image),
+        Err(e) => Err(e.to_string()),
     }
 }
 

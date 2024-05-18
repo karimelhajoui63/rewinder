@@ -36,8 +36,12 @@ export default function App() {
         onSubmit={async (e) => {
           e.preventDefault();
           const timestamp =parseInt(e.currentTarget.timestamp.value);
-          const imageBase64 = await invoke("get_image_base64_from_timestamp", { timestamp }) as string;
-          setImageUrl(imageBase64);          
+          try {
+            const imageBase64 = await invoke("get_image_base64_from_timestamp", { timestamp }) as string;
+            setImageUrl(imageBase64);          
+          } catch (error) {
+            setErrorMessage(error as string);
+          }
         }}
       >
         <input type="text" name="timestamp" placeholder="Enter timestamp" />
