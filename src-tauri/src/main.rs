@@ -15,9 +15,9 @@ fn clear_image_history() -> String {
 }
 
 #[tauri::command]
-fn delete_credentials() -> String {
+fn delete_encryption_key() -> String {
     screen::delete_key_and_nonce();
-    "Credentials deleted".to_string()
+    "Key deleted".to_string()
 }
 
 #[tauri::command]
@@ -65,7 +65,7 @@ async fn main() {
         .invoke_handler(tauri::generate_handler![
             greet,
             clear_image_history,
-            delete_credentials,
+            delete_encryption_key,
             toggle_encryption,
             toggle_periodic_capture,
             toggle_click_event,

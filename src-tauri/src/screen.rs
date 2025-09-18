@@ -251,8 +251,11 @@ pub fn setup_handler(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Err
     }
 
     if is_encryption_enabled() {
+        println!("Encryption is enabled");
         match fetch_or_generate_key_and_nonce() {
-            Ok(_) => {}
+            Ok(_) => {
+                println!("Key and nonce fetched or generated successfully");
+            }
             Err(_) => {
                 println!("Error fetching or generating key and nonce, desabling encryption...");
                 update_settings_in_config_file("encryption_enabled", false);
@@ -324,6 +327,11 @@ pub fn delete_key_and_nonce() {
     // reset the key and nonce
     *KEY.lock().unwrap() = [0u8; 32];
     *NONCE.lock().unwrap() = [0u8; 24];
+    // Delete encrypted images from the database
+    let conn =
+        Connection::open(PathBuf::from(APP_DATA_DIR.lock().unwrap().clone()).join("sqlite.db"))
+            .expect("Error opening database");
+    delete_encrypted_images(&conn).unwrap();
 }
 
 fn fetch_or_generate_key_and_nonce() -> Result<(), anyhow::Error> {
@@ -331,12 +339,15 @@ fn fetch_or_generate_key_and_nonce() -> Result<(), anyhow::Error> {
     let mut key = [0u8; 32];
     let mut nonce = [0u8; 24];
 
+    println!("Fetching key...");
     match keytar::get_password("rewinder", "encryption_key") {
         Ok(encryption_key) => {
             if encryption_key.password.is_empty() {
+                println!("Key already exists but is empty");
                 should_generate_key_and_nonce = true;
             } else {
                 // TODO: handle unwrap
+                println!("Key already exists");
                 key = to_bytes(&encryption_key.password).try_into().unwrap();
                 println!("Key: {:?}", to_string(&key));
             }
@@ -348,11 +359,15 @@ fn fetch_or_generate_key_and_nonce() -> Result<(), anyhow::Error> {
         }
     }
 
+    println!("Fetching nonce...");
     match keytar::get_password("rewinder", "encryption_nonce") {
         Ok(encryption_nonce) => {
+            println!("Nonce fetched");
             if encryption_nonce.password.is_empty() {
                 should_generate_key_and_nonce = true;
+                println!("Nonce already exists but is empty")
             } else {
+                println!("Nonce already exists");
                 nonce = to_bytes(&encryption_nonce.password).try_into().unwrap();
                 println!("Nonce: {}", to_string(&nonce));
             }
@@ -519,4 +534,9 @@ fn retrieve_image(conn: &Connection, timestamp: u64) -> Result<ImageDTO, anyhow:
         String::from_utf8(base64).expect("Error converting base64 to string"),
         String::from_utf8(thumbnail_base64).expect("Error converting thumbnail base64 to string"),
     ))
+}
+
+fn delete_encrypted_images(conn: &Connection) -> Result<()> {
+    conn.execute("DELETE FROM images WHERE encrypted = 1", [])?;
+    Ok(())
 }
